@@ -1,314 +1,110 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Play, Download, Settings, Volume2, StopCircle, Mic, Loader2, AlertCircle } from 'lucide-react';
-
-// Utility function to convert Base64 to ArrayBuffer
-const base64ToArrayBuffer = (base64) => {
-  const binaryString = window.atob(base64);
-  const len = binaryString.length;
-  const bytes = new Uint8Array(len);
-  for (let i = 0; i < len; i++) {
-    bytes[i] = binaryString.charCodeAt(i);
-  }
-  return bytes.buffer;
-};
-
-// Utility to create WAV file from PCM data
-const createWavUrl = (pcmData, sampleRate = 24000) => {
-  const buffer = new ArrayBuffer(44 + pcmData.byteLength);
-  const view = new DataView(buffer);
-
-  // RIFF identifier
-  writeString(view, 0, 'RIFF');
-  // file length
-  view.setUint32(4, 36 + pcmData.byteLength, true);
-  // RIFF type
-  writeString(view, 8, 'WAVE');
-  // format chunk identifier
-  writeString(view, 12, 'fmt ');
-  // format chunk length
-  view.setUint32(16, 16, true);
-  // sample format (raw)
-  view.setUint16(20, 1, true);
-  // channel count (1 for mono)
-  view.setUint16(22, 1, true);
-  // sample rate
-  view.setUint32(24, sampleRate, true);
-  // byte rate (sampleRate * blockAlign)
-  view.setUint32(28, sampleRate * 2, true);
-  // block align (channel count * bytes per sample)
-  view.setUint16(32, 2, true);
-  // bits per sample
-  view.setUint16(34, 16, true);
-  // data chunk identifier
-  writeString(view, 36, 'data');
-  // data chunk length
-  view.setUint32(40, pcmData.byteLength, true);
-
-  // write PCM samples
-  const pcmBytes = new Uint8Array(pcmData);
-  const wavBytes = new Uint8Array(buffer, 44);
-  wavBytes.set(pcmBytes);
-
-  const blob = new Blob([buffer], { type: 'audio/wav' });
-  return URL.createObjectURL(blob);
-};
-
-const writeString = (view, offset, string) => {
-  for (let i = 0; i < string.length; i++) {
-    view.setUint8(offset + i, string.charCodeAt(i));
-  }
-};
-
-const VOICES = [
-  { name: 'Kore', gender: 'Wanita', style: 'Tenang & Natural' },
-  { name: 'Fenrir', gender: 'Pria', style: 'Berat & Berwibawa' },
-  { name: 'Puck', gender: 'Pria', style: 'Ceria & Energik' },
-  { name: 'Aoede', gender: 'Wanita', style: 'Elegan & Profesional' },
-  { name: 'Charon', gender: 'Pria', style: 'Dalam & Serius' },
-];
-
-export default function NaturalTTS() {
-  const [text, setText] = useState('');
-  const [apiKey, setApiKey] = useState('');
-  const [selectedVoice, setSelectedVoice] = useState('Kore');
-  const [loading, setLoading] = useState(false);
-  const [audioUrl, setAudioUrl] = useState(null);
-  const [error, setError] = useState(null);
-  const [showSettings, setShowSettings] = useState(true);
-  
-  const audioRef = useRef(null);
-
-  useEffect(() => {
-    // Check local storage for key
-    const savedKey = localStorage.getItem('gemini_api_key');
-    if (savedKey) {
-      setApiKey(savedKey);
-      setShowSettings(false);
-    }
-  }, []);
-
-  const handleSaveKey = () => {
-    localStorage.setItem('gemini_api_key', apiKey);
-    setShowSettings(false);
-  };
-
-  const handleGenerate = async () => {
-    if (!text.trim()) {
-      setError("Silakan masukkan teks terlebih dahulu.");
-      return;
-    }
-    if (!apiKey) {
-      setError("API Key diperlukan. Silakan buka pengaturan.");
-      setShowSettings(true);
-      return;
-    }
-
-    setLoading(true);
-    setError(null);
-    setAudioUrl(null);
-
-    try {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent?key=${apiKey}`;
-      
-      const payload = {
-        contents: [{ parts: [{ text: text }] }],
-        generationConfig: {
-          responseModalities: ["AUDIO"],
-          speechConfig: {
-            voiceConfig: {
-              prebuiltVoiceConfig: {
-                voiceName: selectedVoice
-              }
-            }
-          }
-        }
-      };
-
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(payload)
-      });
-
-      if (!response.ok) {
-        const errData = await response.json();
-        throw new Error(errData.error?.message || "Gagal menghasilkan audio.");
-      }
-
-      const data = await response.json();
-      const inlineData = data.candidates?.[0]?.content?.parts?.[0]?.inlineData;
-
-      if (inlineData && inlineData.data) {
-        const pcmArrayBuffer = base64ToArrayBuffer(inlineData.data);
-        const wavUrl = createWavUrl(pcmArrayBuffer, 24000); // Defaulting to 24kHz for Gemini TTS
-        setAudioUrl(wavUrl);
-      } else {
-        throw new Error("Format respons tidak valid.");
-      }
-
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const downloadAudio = () => {
-    if (!audioUrl) return;
-    const a = document.createElement('a');
-    a.href = audioUrl;
-    a.download = `voice-vnds-gg-${Date.now()}.wav`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-  };
-
-  return (
-    <div className="min-h-screen bg-slate-900 text-slate-100 p-4 md:p-8 font-sans">
-      <div className="max-w-4xl mx-auto space-y-6">
-        
-        {/* Header */}
-        <header className="flex justify-between items-center mb-8">
-          <div className="flex items-center gap-3">
-            <div className="p-3 bg-indigo-600 rounded-xl shadow-lg shadow-indigo-500/20">
-              <Mic className="w-8 h-8 text-white" />
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>vnds_gg Voice Studio</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { background-color: #0f172a; color: #f1f5f9; }
+        .vnds-card { background: #1e293b; border: 1px solid #334155; }
+    </style>
+</head>
+<body class="p-4 md:p-8 font-sans min-h-screen">
+    <div class="max-w-4xl mx-auto space-y-6">
+        <header class="flex justify-between items-center mb-8">
+            <div class="flex items-center gap-3">
+                <div class="p-3 bg-indigo-600 rounded-xl shadow-lg shadow-indigo-500/20">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-white"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>
+                </div>
+                <div>
+                    <h1 class="text-2xl font-bold">vnds_gg Voice Studio</h1>
+                    <p class="text-slate-400 text-sm">AI Natural Text-to-Speech</p>
+                </div>
             </div>
-            <div>
-              <h1 className="text-2xl font-bold tracking-tight">vnds_gg Voice Studio</h1>
-              <p className="text-slate-400 text-sm">AI Natural Text-to-Speech</p>
-            </div>
-          </div>
-          <button 
-            onClick={() => setShowSettings(!showSettings)}
-            className="p-2 hover:bg-slate-800 rounded-full transition-colors text-slate-400 hover:text-white"
-            title="Pengaturan API Key"
-          >
-            <Settings className="w-6 h-6" />
-          </button>
         </header>
 
-        {/* Settings Panel */}
-        {showSettings && (
-          <div className="bg-slate-800 border border-slate-700 rounded-2xl p-6 shadow-xl animate-in fade-in slide-in-from-top-4">
-            <h3 className="font-semibold mb-3 flex items-center gap-2">
-              <Settings className="w-4 h-4" /> Konfigurasi API
-            </h3>
-            <p className="text-sm text-slate-400 mb-4">
-              Untuk menggunakan suara natural Gemini, Anda memerlukan API Key gratis dari Google AI Studio.
-              Kunci ini disimpan lokal di browser Anda.
-            </p>
-            <div className="flex gap-2">
-              <input 
-                type="password" 
-                placeholder="Tempel Gemini API Key di sini..."
-                value={apiKey}
-                onChange={(e) => setApiKey(e.target.value)}
-                className="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-4 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
-              />
-              <button 
-                onClick={handleSaveKey}
-                className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
-              >
-                Simpan
-              </button>
+        <div class="vnds-card rounded-2xl p-6 shadow-xl mb-6">
+            <h3 class="font-semibold mb-3 flex items-center gap-2">⚙️ Konfigurasi API</h3>
+            <div class="flex gap-2">
+                <input id="apiKey" type="password" placeholder="Tempel Gemini API Key di sini..." class="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-4 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-500">
             </div>
-          </div>
-        )}
-
-        <div className="grid md:grid-cols-3 gap-6">
-          
-          {/* Main Input Area */}
-          <div className="md:col-span-2 space-y-4">
-            <div className="relative">
-              <textarea
-                value={text}
-                onChange={(e) => setText(e.target.value)}
-                placeholder="Ketik teks di sini (maks 5000 karakter)..."
-                maxLength={5000}
-                className="w-full h-80 bg-slate-800 border border-slate-700 rounded-2xl p-6 text-lg leading-relaxed resize-none focus:ring-2 focus:ring-indigo-500 outline-none shadow-inner"
-              />
-              <div className="absolute bottom-4 right-4 text-xs text-slate-500 font-mono bg-slate-900/80 px-2 py-1 rounded">
-                {text.length} / 5000
-              </div>
-            </div>
-            
-            {error && (
-              <div className="bg-red-900/30 border border-red-800 text-red-200 p-4 rounded-xl flex items-center gap-3 text-sm">
-                <AlertCircle className="w-5 h-5 shrink-0" />
-                {error}
-              </div>
-            )}
-          </div>
-
-          {/* Controls Panel */}
-          <div className="space-y-6">
-            
-            {/* Voice Selection */}
-            <div className="bg-slate-800 border border-slate-700 rounded-2xl p-5 shadow-lg">
-              <h3 className="text-sm font-medium text-slate-400 uppercase tracking-wider mb-4">Pilih Suara</h3>
-              <div className="space-y-2">
-                {VOICES.map((voice) => (
-                  <button
-                    key={voice.name}
-                    onClick={() => setSelectedVoice(voice.name)}
-                    className={`w-full text-left p-3 rounded-xl transition-all border ${
-                      selectedVoice === voice.name 
-                        ? 'bg-indigo-600/20 border-indigo-500/50 text-indigo-200' 
-                        : 'bg-slate-700/30 border-transparent hover:bg-slate-700 text-slate-300'
-                    }`}
-                  >
-                    <div className="flex justify-between items-center">
-                      <span className="font-medium">{voice.name}</span>
-                      <span className="text-xs opacity-70 bg-black/20 px-2 py-0.5 rounded-full">{voice.gender}</span>
-                    </div>
-                    <div className="text-xs opacity-60 mt-1">{voice.style}</div>
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Action Buttons */}
-            <div className="bg-slate-800 border border-slate-700 rounded-2xl p-5 shadow-lg space-y-4">
-              <button
-                onClick={handleGenerate}
-                disabled={loading || !text}
-                className="w-full bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 disabled:opacity-50 disabled:cursor-not-allowed text-white py-4 rounded-xl font-bold text-lg shadow-lg shadow-indigo-900/20 flex justify-center items-center gap-2 transition-all active:scale-95"
-              >
-                {loading ? (
-                  <>
-                    <Loader2 className="w-5 h-5 animate-spin" /> Memproses...
-                  </>
-                ) : (
-                  <>
-                    <Volume2 className="w-5 h-5" /> Generate Audio
-                  </>
-                )}
-              </button>
-
-              {audioUrl && (
-                <div className="space-y-3 pt-2 animate-in fade-in slide-in-from-bottom-2">
-                  <audio 
-                    ref={audioRef} 
-                    src={audioUrl} 
-                    controls 
-                    className="w-full h-10 accent-indigo-500" 
-                  />
-                  <button
-                    onClick={downloadAudio}
-                    className="w-full bg-slate-700 hover:bg-slate-600 text-white py-3 rounded-xl font-medium flex justify-center items-center gap-2 transition-colors"
-                  >
-                    <Download className="w-4 h-4" /> Download .WAV
-                  </button>
-                </div>
-              )}
-            </div>
-
-          </div>
+            <p class="text-xs text-slate-500 mt-2">*API Key disimpan hanya di browser Ketua.</p>
         </div>
-      </div>
-    </div>
-  );
-}
 
+        <div class="grid md:grid-cols-3 gap-6">
+            <div class="md:col-span-2 space-y-4">
+                <textarea id="textInput" placeholder="Ketik narasi psikologi di sini..." class="w-full h-80 bg-slate-800 border border-slate-700 rounded-2xl p-6 text-lg leading-relaxed resize-none focus:ring-2 focus:ring-indigo-500 outline-none"></textarea>
+            </div>
+
+            <div class="space-y-6">
+                <div class="vnds-card rounded-2xl p-5 shadow-lg">
+                    <h3 class="text-sm font-medium text-slate-400 uppercase mb-4">Pilih Suara</h3>
+                    <select id="voiceSelect" class="w-full bg-slate-700 border-transparent rounded-xl p-3 text-slate-300 outline-none">
+                        <option value="Fenrir">Fenrir (Pria - Berwibawa)</option>
+                        <option value="Kore" selected>Kore (Wanita - Tenang)</option>
+                        <option value="Aoede">Aoede (Wanita - Elegan)</option>
+                        <option value="Charon">Charon (Pria - Serius)</option>
+                    </select>
+                </div>
+
+                <button onclick="handleGenerate()" id="btnGen" class="w-full bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white py-4 rounded-xl font-bold text-lg shadow-lg flex justify-center items-center gap-2 transition-all active:scale-95">
+                    Generate Audio
+                </button>
+
+                <div id="audioPlayerArea" class="hidden space-y-3">
+                    <audio id="audioElement" controls class="w-full h-10"></audio>
+                    <a id="downloadBtn" class="w-full bg-slate-700 hover:bg-slate-600 text-white py-3 rounded-xl font-medium flex justify-center items-center gap-2 transition-colors cursor-pointer">
+                        Download .WAV
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        async function handleGenerate() {
+            const text = document.getElementById('textInput').value;
+            const key = document.getElementById('apiKey').value;
+            const voice = document.getElementById('voiceSelect').value;
+            const btn = document.getElementById('btnGen');
+
+            if (!text || !key) return alert("Isi teks dan API Key dulu, Ketua!");
+
+            btn.disabled = true;
+            btn.innerText = "Memproses...";
+
+            try {
+                const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${key}`;
+                const response = await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        contents: [{ parts: [{ text: text }] }],
+                        generationConfig: {
+                            responseModalities: ["AUDIO"],
+                            speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voice } } }
+                        }
+                    })
+                });
+
+                const data = await response.json();
+                const base64Audio = data.candidates[0].content.parts[0].inlineData.data;
+                
+                const audioBlob = new Blob([Uint8Array.from(atob(base64Audio), c => c.charCodeAt(0))], { type: 'audio/wav' });
+                const audioUrl = URL.createObjectURL(audioBlob);
+
+                document.getElementById('audioElement').src = audioUrl;
+                document.getElementById('downloadBtn').href = audioUrl;
+                document.getElementById('downloadBtn').download = `vnds-gg-${Date.now()}.wav`;
+                document.getElementById('audioPlayerArea').classList.remove('hidden');
+            } catch (err) {
+                alert("Gagal: " + err.message);
+            } finally {
+                btn.disabled = false;
+                btn.innerText = "Generate Audio";
+            }
+        }
+    </script>
+</body>
+</html>
